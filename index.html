@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek OCR</title>
+    <link rel="icon" type="image/jpeg" href="assets/thumbnail.jpeg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #000000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            cursor: grab;
+            position: relative;
+        }
+
+        #container:active {
+            cursor: grabbing;
+        }
+
+        #svg-wrapper {
+            transform-origin: 0 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        #svg-wrapper.loaded {
+            opacity: 1;
+        }
+
+        #illustration {
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 12px 20px;
+            border-radius: 25px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            z-index: 100;
+            color: white;
+            font-size: 14px;
+            backdrop-filter: blur(10px);
+        }
+
+        button {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        button:active {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        .zoom-level {
+            min-width: 60px;
+            text-align: center;
+            font-weight: 500;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container">
+        <div id="svg-wrapper">
+            <object id="illustration" data="assets/ultra_wide_deepseek_OCR.svg" type="image/svg+xml"></object>
+        </div>
+    </div>
+
+    <div id="controls">
+        <button id="zoom-out">−</button>
+        <span class="zoom-level" id="zoom-display">100%</span>
+        <button id="zoom-in">+</button>
+        <button id="reset">Reset</button>
+    </div>
+
+    <script>
+        const container = document.getElementById('container');
+        const wrapper = document.getElementById('svg-wrapper');
+        const illustration = document.getElementById('illustration');
+        const zoomDisplay = document.getElementById('zoom-display');
+
+        let scale = 1;
+        let translateX = 0;
+        let translateY = 0;
+        let isDragging = false;
+        let startX, startY;
+        let svgWidth = 0;
+        let svgHeight = 0;
+        let minScale = 0.1; // Will be updated based on fit-to-screen scale
+
+        const MAX_SCALE = 20;
+        const ZOOM_SPEED = 0.15;
+        const MAX_ZOOM_OUT_FACTOR = 1.1; // Allow zooming out to 110% of fitted view
+
+        // Wait for SVG to load and initialize
+        illustration.addEventListener('load', () => {
+            try {
+                const svgDoc = illustration.contentDocument;
+                const svg = svgDoc.querySelector('svg');
+
+                if (svg) {
+                    const viewBox = svg.viewBox.baseVal;
+                    if (viewBox && viewBox.width && viewBox.height) {
+                        svgWidth = viewBox.width;
+                        svgHeight = viewBox.height;
+                    } else {
+                        svgWidth = parseFloat(svg.getAttribute('width')) || 1000;
+                        svgHeight = parseFloat(svg.getAttribute('height')) || 1000;
+                    }
+
+                    // Set wrapper to actual SVG dimensions for proper scaling
+                    wrapper.style.width = svgWidth + 'px';
+                    wrapper.style.height = svgHeight + 'px';
+
+                    // Fit to screen initially
+                    fitToScreen();
+                    // Show the SVG after positioning
+                    wrapper.classList.add('loaded');
+                }
+            } catch (error) {
+                console.error('Error loading SVG:', error);
+                // Set default dimensions if SVG load fails
+                svgWidth = 1000;
+                svgHeight = 1000;
+                wrapper.style.width = svgWidth + 'px';
+                wrapper.style.height = svgHeight + 'px';
+                fitToScreen();
+                wrapper.classList.add('loaded');
+            }
+        });
+
+        function fitToScreen() {
+            if (svgWidth === 0 || svgHeight === 0) {
+                return; // Don't calculate if dimensions aren't ready
+            }
+            // Always get fresh container dimensions
+            const containerRect = container.getBoundingClientRect();
+            const containerWidth = containerRect.width;
+            const containerHeight = containerRect.height;
+
+            // Calculate scale to fill 95% of screen width (for ultra-wide images)
+            scale = (containerWidth * 0.95) / svgWidth;
+
+            // Set minimum scale to allow zooming out to 110% of fitted view
+            minScale = scale / MAX_ZOOM_OUT_FACTOR;
+
+            centerImage();
+        }
+
+        function centerImage() {
+            // Position at top left corner
+            translateX = 0;
+            translateY = 0;
+
+            updateTransform();
+        }
+
+        function updateTransform() {
+            wrapper.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+            zoomDisplay.textContent = `${Math.round(scale * 100)}%`;
+        }
+
+        function zoom(delta, clientX, clientY) {
+            const oldScale = scale;
+            scale = Math.max(minScale, Math.min(MAX_SCALE, scale + delta));
+
+            if (scale !== oldScale) {
+                const containerRect = container.getBoundingClientRect();
+                const mouseX = clientX - containerRect.left;
+                const mouseY = clientY - containerRect.top;
+
+                const scaleRatio = scale / oldScale;
+                translateX = mouseX - (mouseX - translateX) * scaleRatio;
+                translateY = mouseY - (mouseY - translateY) * scaleRatio;
+
+                updateTransform();
+            }
+        }
+
+        // Mouse wheel zoom
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = -Math.sign(e.deltaY) * ZOOM_SPEED;
+            zoom(delta, e.clientX, e.clientY);
+        }, { passive: false });
+
+        // Mouse drag
+        container.addEventListener('mousedown', (e) => {
+            if (e.button === 0) {
+                isDragging = true;
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                translateX = e.clientX - startX;
+                translateY = e.clientY - startY;
+                updateTransform();
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        // Touch support for mobile
+        let touchDistance = 0;
+
+        container.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                touchDistance = Math.hypot(
+                    touch2.clientX - touch1.clientX,
+                    touch2.clientY - touch1.clientY
+                );
+            } else if (e.touches.length === 1) {
+                isDragging = true;
+                startX = e.touches[0].clientX - translateX;
+                startY = e.touches[0].clientY - translateY;
+            }
+        });
+
+        container.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 2) {
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                const newDistance = Math.hypot(
+                    touch2.clientX - touch1.clientX,
+                    touch2.clientY - touch1.clientY
+                );
+                const centerX = (touch1.clientX + touch2.clientX) / 2;
+                const centerY = (touch1.clientY + touch2.clientY) / 2;
+
+                const delta = (newDistance - touchDistance) * 0.01;
+                zoom(delta, centerX, centerY);
+                touchDistance = newDistance;
+            } else if (e.touches.length === 1 && isDragging) {
+                translateX = e.touches[0].clientX - startX;
+                translateY = e.touches[0].clientY - startY;
+                updateTransform();
+            }
+        }, { passive: false });
+
+        container.addEventListener('touchend', () => {
+            isDragging = false;
+        });
+
+        // Button controls
+        document.getElementById('zoom-in').addEventListener('click', () => {
+            const rect = container.getBoundingClientRect();
+            zoom(ZOOM_SPEED, rect.width / 2, rect.height / 2);
+        });
+
+        document.getElementById('zoom-out').addEventListener('click', () => {
+            const rect = container.getBoundingClientRect();
+            zoom(-ZOOM_SPEED, rect.width / 2, rect.height / 2);
+        });
+
+        document.getElementById('reset').addEventListener('click', () => {
+            fitToScreen();
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                const rect = container.getBoundingClientRect();
+                zoom(ZOOM_SPEED, rect.width / 2, rect.height / 2);
+            } else if (e.key === '-' || e.key === '_') {
+                e.preventDefault();
+                const rect = container.getBoundingClientRect();
+                zoom(-ZOOM_SPEED, rect.width / 2, rect.height / 2);
+            } else if (e.key === '0' || e.key === 'r' || e.key === 'R') {
+                e.preventDefault();
+                fitToScreen();
+            }
+        });
+
+        // Handle window resize - always maintain 80% height
+        window.addEventListener('resize', () => {
+            fitToScreen();
+        });
+    </script>
+</body>
+
+</html>
